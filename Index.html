@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Admin Panel — CashReward</title>
+
+  <!-- Monetag Ad Code (also included here if needed) -->
+  <script src='//libtl.com/sdk.js' data-zone='10203916' data-sdk='show_10203916'></script>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;background:#f3f4f6;padding:20px}
+    .card{background:#fff;padding:16px;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,0.04)}
+    .btn{padding:8px 12px;border-radius:8px;cursor:pointer}
+    .btn-accent{background:#fb7a2d;color:#fff}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #eee}
+  </style>
+</head>
+<body class="max-w-4xl mx-auto">
+
+  <h1 class="text-2xl font-bold mb-4">Admin Panel — CashReward</h1>
+
+  <!-- Login box -->
+  <div id="authBox" class="card mb-4">
+    <h2 class="font-semibold">Admin Login</h2>
+    <div class="mt-2">
+      <input id="admin-email" placeholder="Email" class="p-2 w-full mb-2"/><br/>
+      <input id="admin-pass" placeholder="Password" type="password" class="p-2 w-full mb-2"/><br/>
+      <button id="loginBtn" class="btn btn-accent">Login</button>
+      <div id="loginMsg" class="small mt-2"></div>
+    </div>
+  </div>
+
+  <!-- Panel -->
+  <div id="panel" style="display:none">
+    <div class="card mb-4">
+      <h2 class="font-semibold">App Config</h2>
+      <div class="mt-2">
+        <label>Telegram Link</label>
+        <input id="cfg-telegram" class="p-2 w-full mb-2"/>
+        <label>Facebook Link</label>
+        <input id="cfg-fb" class="p-2 w-full mb-2"/>
+        <label>Ad Watch Reward (৳)</label>
+        <input id="cfg-adreward" type="number" class="p-2 w-full mb-2" value="5"/>
+        <label>Min Withdraw Amount (৳)</label>
+        <input id="cfg-minwithdraw" type="number" class="p-2 w-full mb-2" value="50"/>
+        <button id="saveCfg" class="btn btn-accent">Save Config</button>
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <h2 class="font-semibold">Pending Withdrawals</h2>
+      <div id="withdraws">Loading...</div>
+    </div>
+
+    <div class="card mb-4">
+      <h2 class="font-semibold">Users (Top 20)</h2>
+      <div id="usersTable">Loading...</div>
+    </div>
+  </div>
+
+  <script type="module">
+    // Firebase + Auth for admin
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
+    import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, getDocs, query, where, addDoc } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCKR2KyLhJoB_qdMBpoJN5raBWDCRDEonE",
+      authDomain: "earning-7bc45.firebaseapp.com",
+      projectId: "earning-7bc45",
+      storageBucket: "earning-7bc45.firebasestorage.app",
+      messagingSenderId: "94413359022",
+      appId: "1:94413359022:web:db5b84117334175c7f2a3f"
+    };
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    document.getElementById('loginBtn').addEventListener('click', async()=>{
+      const email = document.getElementById('admin-email').value;
+      const pass = document.getElementById('admin-pass').value;
+      try {
+        await signInWithEmailAndPassword(auth, email, pass);
+      } catch(e){ document.getElementById('loginMsg').textContent = 'Login failed: ' + e.message; }
+    });
+
+    onAuthStateChanged(auth, async user=>{
+      if (user){
+        document.getElementById('authBox').style.display='none';
+        document.getElementById('panel').style.display='block';
+        loadConfig();
+        loadWithdrawals();
+        loadUsers();
+      } else {
+        document.getElementById('authBox').style.display='block';
+        document.getElementById('panel').style.display='none';
+      }
+    });
+
+    async function loadConfig(){
+      const c = await getDoc(doc(db,'config','main'));
+      if (c.exists()){
+        const data = c.data();
+        document.getElementById('cfg-telegram').value = data.telegramLink || '';
+        document.getElementById('cfg-fb').value = data.facebookLink || '';
+        document.getElementById('cfg-adreward').value = data.adWatchReward || 5;
+        document.getElementById('cfg-minwithdraw').value = data.minWithdrawal || 50;
+      }
+    }
+    document.getElementById('saveCfg').addEventListener('click', async ()=>{
+      const telegram = document.getElementById('cfg-telegram').value;
+      const fb = document.getElementById('cfg-fb').value;
+      const adreward = parseInt(document.getElementById('cfg-adreward').value||5);
+      const minwithdraw = parseInt(document.getElementById('cfg-minwithdraw').value||50);
+      await setDoc(doc(db,'config','main'), { telegramLink: telegram, facebookLink: fb, adWatchReward: adreward, minWithdrawal: minwithdraw }, { merge:true });
+      alert('Saved');
+    });
+
+    async function loadWithdrawals(){
+      const snaps = await getDocs(collection(db,'withdrawals'));
+      const arr = [];
+      snaps.forEach(s=>arr.push({ id: s.id, ...s.data() }));
+      const pending = arr.filter(a=>a.status==='pending');
+      const el = document.getElementById('withdraws');
+      if (pending.length===0) el.innerHTML = '<div class="small">No pending requests</div>';
+      else {
+        el.innerHTML = pending.map(p=>{
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;border-bottom:1px solid #eee">
+            <div><b>${p.userId}</b><div class="small">${p.method} - ${p.number || ''}</div></div>
+            <div><div>৳${p.amount}</div>
+              <div style="margin-top:6px">
+                <button class="btn" onclick="approve('${p.id}', ${p.amount}, '${p.userId}')">Approve</button>
+                <button class="btn" onclick="reject('${p.id}', '${p.userId}', ${p.amount})">Reject</button>
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    window.approve = async (id, amount, uid)=>{
+      // mark approved
+      await updateDoc(doc(db,'withdrawals',id), { status:'approved', processedAt: new Date() });
+      // (In a real system you would send money using your payout system)
+      alert('Marked approved');
+      loadWithdrawals();
+    };
+
+    window.reject = async (id, uid, amount)=>{
+      // mark rejected and refund user
+      await updateDoc(doc(db,'withdrawals',id), { status:'rejected', processedAt: new Date() });
+      // refund
+      const uref = doc(db,'users',uid);
+      const udoc = await getDoc(uref);
+      if (udoc.exists()){
+        const prev = udoc.data().balance || 0;
+        await updateDoc(uref, { balance: prev + amount });
+      }
+      alert('Rejected and refunded');
+      loadWithdrawals();
+    };
+
+    async function loadUsers(){
+      const snaps = await getDocs(collection(db,'users'));
+      const arr = [];
+      snaps.forEach(s=>arr.push(s.data()));
+      arr.sort((a,b)=> (b.balance||0) - (a.balance||0));
+      const top = arr.slice(0,20);
+      document.getElementById('usersTable').innerHTML = `<table><thead><tr><th>User</th><th>Balance</th></tr></thead><tbody>${top.map(u=>`<tr><td>${u.name || u.uid}</td><td>৳${u.balance||0}</td></tr>`).join('')}</tbody></table>`;
+    }
+
+  </script>
+</body>
+</html>
